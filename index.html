@@ -245,17 +245,20 @@ function liveToLeague(rows){
   const pl={},sx={};
   rows.forEach(r=>{const m=r.key.match(/^[^/]+\/[^/]+\/week\/reg\/(\d+)\/(\w+)$/);if(!m)return;const g=groups.find(x=>x[0]===m[2]);if(!g)return;
     (r.body[g[1]]||[]).forEach(s=>{const tid=tmap[s.teamId];if(tid===undefined)return;
-      const p=pl[s.rosterId]||(pl[s.rosterId]={id:s.rosterId,tid,name:s.fullName,pos:'',num:'',ovr:'',age:'',k:{}});p.k[g[0]]=1;
+      const wk0=s.weekIndex!=null?s.weekIndex+1:+m[1];const p=pl[s.rosterId]||(pl[s.rosterId]={id:s.rosterId,tid,lastWk:wk0,name:s.fullName,pos:'',num:'',ovr:'',age:'',k:{}});p.k[g[0]]=1;if(wk0>=p.lastWk){p.tid=tid;p.lastWk=wk0}
       const wk=s.weekIndex!=null?s.weekIndex+1:+m[1];
-      const o=sx[s.rosterId+'-'+wk]||(sx[s.rosterId+'-'+wk]={pid:s.rosterId,week:wk});
+      const o=sx[s.rosterId+'-'+wk]||(sx[s.rosterId+'-'+wk]={pid:s.rosterId,week:wk,tid});
       if(g[0]==='passing')Object.assign(o,{pa:s.passAtt,pc:s.passComp,py:s.passYds,ptd:s.passTDs,pint:s.passInts});
       if(g[0]==='rushing')Object.assign(o,{ra:s.rushAtt,ry:s.rushYds,rtd:s.rushTDs});
       if(g[0]==='receiving')Object.assign(o,{rec:s.recCatches,recy:s.recYds,rectd:s.recTDs});
       if(g[0]==='defense')Object.assign(o,{tkl:s.defTotalTackles,sck:s.defSacks,int:s.defInts});
       if(g[0]==='kicking')Object.assign(o,{fgm:s.fGMade,fga:s.fGAtt})})});
-  Object.values(pl).forEach(p=>{p.pos=p.k.passing?'QB':p.k.kicking?'K':p.k.rushing?'RB':p.k.receiving?'WR':'DEF';delete p.k});
+  const moves=[],byP={};
+  Object.values(sx).forEach(o=>{(byP[o.pid]=byP[o.pid]||[]).push(o)});
+  Object.values(byP).forEach(a=>{a.sort((x,y)=>x.week-y.week);for(let i=1;i<a.length;i++)if(a[i].tid!==a[i-1].tid)moves.push({pid:a[i].pid,week:a[i].week,from:a[i-1].tid,to:a[i].tid,fromWeek:a[i-1].week})});
+  Object.values(pl).forEach(p=>{delete p.lastWk;p.pos=p.k.passing?'QB':p.k.kicking?'K':p.k.rushing?'RB':p.k.receiving?'WR':'DEF';delete p.k});
   const wks=games.map(g=>g.week);
-  return{league:'My Franchise',season:st[0]&&st[0].calendarYear||'',week:Math.max(...wks),live:true,teams,players:Object.values(pl),games,stats:Object.values(sx),standings};
+  return{league:'My Franchise',season:st[0]&&st[0].calendarYear||'',week:Math.max(...wks),live:true,teams,players:Object.values(pl),games,stats:Object.values(sx),standings,moves};
 }
 const MAIN={DEN:'#fc4c02'};
 function tcol(t){return MAIN[t.abbr]||t.color||`hsl(${hue(t.id)} 55% 38%)`}
@@ -422,6 +425,9 @@ function newsFor(wk){
     if(star)body+=` ${star.name} led the way: ${line(star,best)}.`;
     items.push({tags,score:tags.length*100+(tags.includes('Upset')?50:0)+(tags.includes('Nail-biter')?30:0)+margin,head:`${W.name} ${ws}, ${L.name} ${ls}`,body,W,L});
   });
+  (D.moves||[]).filter(m=>m.week===wk&&X.player[m.pid]&&X.team[m.from]&&X.team[m.to]).slice(0,6).forEach(m=>{
+    const p=X.player[m.pid],F=X.team[m.from],T=X.team[m.to];
+    items.push({tags:['Roster move'],score:70,head:`${p.name} moves from the ${F.name} to the ${T.name}`,body:`${p.name} played for the ${F.city} ${F.name} in week ${m.fromWeek} and showed up on the ${T.city} ${T.name} stat sheet in week ${m.week}. It could be a trade or a signing; Madden's export doesn't say which.`})});
   /* streaks, division races and standout performances */
   const now=through(wk),prev=through(wk-1);
   const played=new Set();(X.byWeek[wk]||[]).filter(g=>g.played).forEach(g=>{played.add(g.home);played.add(g.away)});
@@ -466,6 +472,10 @@ V.news=()=>{
   <section class="card"><h2>Top of the league</h2>${table(['Team','Record','Diff'],top.map(t=>{const r=X.rec[t.id];return [tlink(t),recStr(r),r.pf-r.pa]}))}</section>
   ${streaks.length?`<section class="card"><h2>Streaks</h2>${table(['Team','Streak'],streaks.map(([t,st])=>[tlink(t),`<span class="pill ${st[0]==='W'?'w':'l'}">${st}</span>`]))}</section>`:''}</div></div>`;
 };
+V.moves=()=>{
+  const m=(D.moves||[]).filter(x=>X.player[x.pid]&&X.team[x.from]&&X.team[x.to]).sort((a,b)=>b.week-a.week);
+  return `<h1>Roster Moves</h1><p class="note">Players who played for a different team than the week before. Madden doesn't say whether a move was a trade, a signing or a release, and players with no stats that week can't be seen.</p><section class="card">${m.length?table(['Week','Player','Pos','From','To'],m.map(x=>[x.week,plink(X.player[x.pid]),X.player[x.pid].pos,tlink(X.team[x.from],1),tlink(X.team[x.to],1)])):'<p class="muted">No moves found.</p>'}</section>`;
+};
 V.trades=()=>`<h1>Trades</h1><section class="card" style="margin-top:12px"><div class="note" style="margin-bottom:6px">${(D.trades||[]).length} trade${(D.trades||[]).length===1?'':'s'} this season. Rosters above already reflect them.</div>${(D.trades||[]).map(t=>tradeHtml(t)).join('')||'<p class="muted">No trades recorded.</p>'}</section>`;
 function awardsFor(wk){
   const have=(D.awards||[]).filter(a=>a.week===wk&&X.player[a.pid]);if(have.length)return have;
@@ -504,16 +514,16 @@ V.import=()=>`<h1>Connect your franchise</h1>
 /* ---------- load / route / events ---------- */
 function setData(d,demo){
   if(!d||!Array.isArray(d.teams)||!d.teams.length||!Array.isArray(d.games))throw new Error('File needs a teams list and a games list. See the format on this page.');
-  d.retired=d.retired||[];d.players=d.players||[];d.stats=d.stats||[];d.trades=d.trades||[];d.awards=d.awards||[];
+  d.moves=d.moves||[];d.retired=d.retired||[];d.players=d.players||[];d.stats=d.stats||[];d.trades=d.trades||[];d.awards=d.awards||[];
   d.week=d.week||Math.max(1,...d.games.filter(g=>g.played).map(g=>g.week).concat([0]))+1;
   D=d;DEMO=!!demo;X=build(d);selWeek=null;
   $('lg').textContent=(d.league||'Franchise')+' · '+(d.season||'')+' · Week '+d.week+(d.live?' · Live':'');
 }
-const NAV=[['scores','Scores'],['news','News'],['matchups','Matchups'],['standings','Standings'],['schedule','Schedule'],['teams','Teams'],['players','Players'],['leaders','Leaders'],['trades','Trades'],['injuries','Injuries'],['retired','Retired'],['awards','Awards'],['import','Connect']];
+const NAV=[['scores','Scores'],['news','News'],['matchups','Matchups'],['standings','Standings'],['schedule','Schedule'],['teams','Teams'],['players','Players'],['leaders','Leaders'],['trades','Trades'],['moves','Moves'],['injuries','Injuries'],['retired','Retired'],['awards','Awards'],['import','Connect']];
 function route(){
   const h=location.hash.slice(1)||'scores', [name,arg]=h.split('-');
   const base=name==='team'||name==='player'?(name==='team'?'teams':'players'):name;
-  $('nav').innerHTML=NAV.filter(([k])=>k!=='trades'||(D.trades&&D.trades.length)).map(([k,l])=>`<a href="#${k}" class="${k===base?'on':''}">${l}</a>`).join('');
+  $('nav').innerHTML=NAV.filter(([k])=>(k!=='trades'||(D.trades&&D.trades.length))&&(k!=='moves'||(D.moves&&D.moves.length))).map(([k,l])=>`<a href="#${k}" class="${k===base?'on':''}">${l}</a>`).join('');
   let html;
   try{
     if(name==='team')html=teamPage(+arg);else if(name==='player')html=playerPage(+arg);else html=(V[name]||V.scores)();
