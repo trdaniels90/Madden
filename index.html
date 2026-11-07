@@ -210,6 +210,7 @@ function build(d){
   });
   d.stats.forEach(s=>{const t=x.tot[s.pid];if(!t)return;t.gp++;F.forEach(f=>t[f]+=(s[f]||0));x.logs[s.pid].push(s)});
   Object.values(x.logs).forEach(l=>l.sort((a,b)=>a.week-b.week));
+  if(d.standings)d.standings.forEach(s=>{const r=x.rec[s.tid];if(r)Object.assign(r,{w:s.w,l:s.l,t:s.t,pf:s.pf,pa:s.pa,hw:s.hw,hl:s.hl,aw:s.aw,al:s.al,res:[]})});
   return x;
 }
 const pct=r=>{const g=r.w+r.l+r.t;return g?(r.w+r.t/2)/g:0};
@@ -224,8 +225,36 @@ let PHOTOS={};try{PHOTOS=JSON.parse(localStorage.getItem('fh-photos')||'{}')}cat
 function avatar(p){const src=PHOTOS[p.id];if(src)return `<img class="ava" src="${esc(src)}" alt="${esc(p.name)}">`;const ini=p.name.split(' ').map(w=>w[0]).join('').slice(0,2);return `<span class="ava" aria-hidden="true">${esc(ini)}</span>`}
 let selInj='ALL';
 const LIVE={url:'https://wucsdyvuntrgpaloyaqg.supabase.co',key:'sb_publishable_PZoBMwbAdZKTA-UtCMG3Kw_GzjAOzbo'};
-let liveInfo=undefined;
-async function checkLive(){try{const r=await fetch(LIVE.url+'/rest/v1/league_data?select=key,updated_at&order=updated_at.desc',{headers:{apikey:LIVE.key}});const rows=await r.json();liveInfo=Array.isArray(rows)?rows:null}catch(_){liveInfo=null}}
+let liveInfo=undefined, liveRows=null;
+async function checkLive(){try{const r=await fetch(LIVE.url+'/rest/v1/league_data?select=key,body,updated_at&order=updated_at.desc',{headers:{apikey:LIVE.key}});const rows=await r.json();if(Array.isArray(rows)){liveRows=rows;liveInfo=rows.map(x=>({key:x.key,updated_at:x.updated_at}))}else liveInfo=null}catch(_){liveInfo=null}}
+/* Turns the Madden Companion App export (stored by the receiver) into the league shape the Hub reads. */
+function liveToLeague(rows){
+  const by={};rows.forEach(r=>{const p=r.key.split('/');by[p.slice(2).join('/')]=r.body});
+  const lt=by['leagueteams']&&by['leagueteams'].leagueTeamInfoList;if(!lt||!lt.length)return null;
+  const tmap={};
+  const teams=lt.map((t,i)=>{tmap[t.teamId]=i;const dv=(t.divName||'').split(' ');return{id:i,conf:dv[0]||'',div:dv.slice(1).join(' ')||'',abbr:t.abbrName,city:t.cityName,name:t.nickName||t.displayName,ovr:t.ovrRating||70}});
+  const games=[];
+  rows.forEach(r=>{const m=r.key.match(/^[^/]+\/[^/]+\/week\/reg\/(\d+)\/schedules$/);if(!m)return;
+    (r.body.gameScheduleInfoList||[]).forEach(g=>{const h=tmap[g.homeTeamId],a=tmap[g.awayTeamId];if(h===undefined||a===undefined)return;
+      games.push({week:+m[1],home:h,away:a,hs:g.homeScore,as:g.awayScore,played:g.status===3})})});
+  if(!games.length)return null;
+  const st=(by['standings']&&by['standings'].teamStandingInfoList)||[];
+  const standings=st.filter(x=>tmap[x.teamId]!==undefined).map(x=>({tid:tmap[x.teamId],w:x.totalWins,l:x.totalLosses,t:x.totalTies,pf:x.ptsFor,pa:x.ptsAgainst,hw:x.homeWins,hl:x.homeLosses,aw:x.awayWins,al:x.awayLosses}));
+  const groups=[['passing','playerPassingStatInfoList'],['rushing','playerRushingStatInfoList'],['receiving','playerReceivingStatInfoList'],['defense','playerDefensiveStatInfoList'],['kicking','playerKickingStatInfoList']];
+  const pl={},sx={};
+  rows.forEach(r=>{const m=r.key.match(/^[^/]+\/[^/]+\/week\/reg\/(\d+)\/(\w+)$/);if(!m)return;const g=groups.find(x=>x[0]===m[2]);if(!g)return;const wk=+m[1];
+    (r.body[g[1]]||[]).forEach(s=>{const tid=tmap[s.teamId];if(tid===undefined)return;
+      const p=pl[s.rosterId]||(pl[s.rosterId]={id:s.rosterId,tid,name:s.fullName,pos:'',num:'',ovr:'',age:'',k:{}});p.k[g[0]]=1;
+      const o=sx[s.rosterId+'-'+wk]||(sx[s.rosterId+'-'+wk]={pid:s.rosterId,week:wk});
+      if(g[0]==='passing')Object.assign(o,{pa:s.passAtt,pc:s.passComp,py:s.passYds,ptd:s.passTDs,pint:s.passInts});
+      if(g[0]==='rushing')Object.assign(o,{ra:s.rushAtt,ry:s.rushYds,rtd:s.rushTDs});
+      if(g[0]==='receiving')Object.assign(o,{rec:s.recCatches,recy:s.recYds,rectd:s.recTDs});
+      if(g[0]==='defense')Object.assign(o,{tkl:s.defTotalTackles,sck:s.defSacks,int:s.defInts});
+      if(g[0]==='kicking')Object.assign(o,{fgm:s.fGMade,fga:s.fGAtt})})});
+  Object.values(pl).forEach(p=>{p.pos=p.k.passing?'QB':p.k.kicking?'K':p.k.rushing?'RB':p.k.receiving?'WR':'DEF';delete p.k});
+  const wks=games.map(g=>g.week);
+  return{league:'My Franchise',season:st[0]&&st[0].calendarYear||'',week:Math.max(...wks),live:true,teams,players:Object.values(pl),games,stats:Object.values(sx),standings};
+}
 function badge(t,c){const L=LOGOS[t.abbr];if(L)return `<span class="badge logo ${c||''}"><img src="${esc(L)}" alt="${esc(t.abbr)}"></span>`;return `<span class="badge ${c||''}" style="background:hsl(${hue(t.id)} 55% 38%)">${esc(t.abbr)}</span>`}
 function tlink(t,short){return `<a class="tm" href="#team-${t.id}">${badge(t,'sm')}<span>${esc(short?t.abbr:t.city+' '+t.name)}</span></a>`}
 function plink(p){return p?`<a href="#player-${p.id}" style="font-weight:600">${esc(p.name)}</a>`:''}
@@ -262,10 +291,10 @@ function gameCard(g,detail){
 /* ---------- views ---------- */
 const V={};
 V.scores=()=>{
-  const wk=selWeek??Math.max(1,D.week-1); const gs=X.byWeek[wk]||[];
+  const wk=selWeek??(D.live?D.week:Math.max(1,D.week-1)); const gs=X.byWeek[wk]||[];
   const lead=(f,l)=>{const a=Object.entries(X.tot).sort((p,q)=>q[1][f]-p[1][f]).slice(0,5).map(([id,t])=>[plink(X.player[id]),(X.team[X.player[id].tid]||{}).abbr,t[f]]);return `<h3>${l}</h3>`+table(['Player','Tm',''],a.map(r=>[r[0],r[1],'<b>'+r[2]+'</b>']))};
   const cw=awardsFor(wk);
-  return `<div class="cols grid"><div><h1>Scoreboard</h1>${weekChips(wk,Math.max(1,D.week-1),'scores')}<div class="grid g2">${gs.map(g=>gameCard(g)).join('')||'<p class="muted">No games this week.</p>'}</div></div>
+  return `<div class="cols grid"><div><h1>Scoreboard</h1>${weekChips(wk,D.live?D.week:Math.max(1,D.week-1),'scores')}<div class="grid g2">${gs.map(g=>gameCard(g)).join('')||'<p class="muted">No games this week.</p>'}</div></div>
   <div class="grid" style="align-content:start"><section class="card"><h2>Players of the Week</h2>${cw.length?cw.map(a=>`<p style="margin:0 0 10px"><span class="pill">${esc(a.type)}</span><br>${plink(X.player[a.pid])} <span class="muted">${esc(X.team[X.player[a.pid].tid]?.abbr||'')}</span><br><span class="kp">${esc(a.text)}</span></p>`).join(''):'<p class="muted">Awards post after the week is played.</p>'}</section>
   <section class="card">${lead('py','Passing yards')}</section><section class="card">${lead('ry','Rushing yards')}</section></div></div>`;
 };
@@ -316,7 +345,7 @@ function teamPage(id){
   <div class="grid" style="align-content:start"><section class="card"><h2>Schedule</h2>${schedTable(t)}</section><section class="card"><h2>Trades</h2>${tr.length?tr.map(tradeHtml).join(''):'<p class="muted">No trades.</p>'}</section></div></div>`;
 }
 V.players=()=>{
-  const poss=['ALL','QB','RB','WR','TE','DL','LB','CB','S','K'];
+  const poss=['ALL','QB','RB','WR','TE','DL','LB','CB','S','K','DEF'];
   let ps=D.players.filter(p=>(posFilter==='ALL'||p.pos===posFilter)&&(!query||p.name.toLowerCase().includes(query.toLowerCase())));
   ps.sort((a,b)=>b.ovr-a.ovr);const tot=ps.length;ps=ps.slice(0,100);
   return `<h1>Players</h1><div class="bar-ctl" style="margin-top:10px"><input type="search" id="q" placeholder="Search name" value="${esc(query)}" aria-label="Search players"><select id="pos" aria-label="Position">${poss.map(p=>`<option ${p===posFilter?'selected':''}>${p}</option>`).join('')}</select></div>
@@ -386,7 +415,7 @@ V.import=()=>`<h1>Connect your franchise</h1>
 <textarea id="paste" placeholder="Or paste league JSON here" aria-label="League JSON"></textarea>
 <div class="bar-ctl" style="margin-top:8px"><button class="btn" id="loadPaste">Load pasted JSON</button><button class="btn alt" id="loadSample">Reset to sample league</button></div><div id="imsg" class="msg" role="status"></div></section>
 <section class="card"><h2>File format</h2><p class="note">Only teams and games are required. Standings, matchups and schedules need those. Players and stats unlock rosters, leaders and awards. Exporter files have their own layout, so an adapter turns each one into this shape.</p><pre>${esc(SCHEMA)}</pre><div class="bar-ctl" style="margin-top:8px"><button class="btn alt" id="copySchema">Copy format</button></div></section>
-<section class="card"><h2>Live feed</h2><p class="note">Madden's Companion App export can send your league here each week. Status of the receiver:</p><p class="msg ${liveInfo?'ok':'err'}" role="status">${liveInfo===undefined?'Checking...':liveInfo===null?'Receiver not reachable.':liveInfo.length?liveInfo.length+' exports received. Latest '+esc(new Date(liveInfo[0].updated_at).toLocaleString())+'.':'Receiver is ready. No exports received yet.'}</p></section>
+<section class="card"><h2>Live feed</h2><p class="note">Your Companion App exports arrive here and the Hub shows them automatically. Stats cover the weeks you have exported. Status of the receiver:</p><p class="msg ${liveInfo?'ok':'err'}" role="status">${liveInfo===undefined?'Checking...':liveInfo===null?'Receiver not reachable.':liveInfo.length?liveInfo.length+' exports received. Latest '+esc(new Date(liveInfo[0].updated_at).toLocaleString())+'.':'Receiver is ready. No exports received yet.'}</p></section>
 <section class="card"><h2>Team logos</h2><p class="note">Pick your own logo images. Name each file after the team abbreviation, such as BUF.png or KC.svg. Images are shrunk and kept in this browser only.</p><div class="bar-ctl"><input type="file" id="logos" accept="image/*" multiple aria-label="Team logo images"></div><div class="bar-ctl"><button class="btn alt" id="clearLogos">Remove logos</button></div><div id="lmsg" class="msg" role="status">${Object.keys(LOGOS).length} logo${Object.keys(LOGOS).length===1?'':'s'} loaded.</div></section>
 <section class="card"><h2>Player pictures</h2><p class="note">Pick your own images. Name each file after the player, such as Caleb Gaines.png, or after the player id, such as 20.png. Images are shrunk and kept in this browser only.</p><div class="bar-ctl"><input type="file" id="photos" accept="image/*" multiple aria-label="Player pictures"></div><div class="bar-ctl"><button class="btn alt" id="clearPhotos">Remove pictures</button></div><div id="pmsg" class="msg" role="status">${Object.keys(PHOTOS).length} picture${Object.keys(PHOTOS).length===1?'':'s'} loaded.</div></section></div>`;
 
@@ -396,7 +425,7 @@ function setData(d,demo){
   d.retired=d.retired||[];d.players=d.players||[];d.stats=d.stats||[];d.trades=d.trades||[];d.awards=d.awards||[];
   d.week=d.week||Math.max(1,...d.games.filter(g=>g.played).map(g=>g.week).concat([0]))+1;
   D=d;DEMO=!!demo;X=build(d);selWeek=null;
-  $('lg').textContent=(d.league||'Franchise')+' · '+(d.season||'')+' · Week '+d.week;
+  $('lg').textContent=(d.league||'Franchise')+' · '+(d.season||'')+' · Week '+d.week+(d.live?' · Live':'');
 }
 const NAV=[['scores','Scores'],['matchups','Matchups'],['standings','Standings'],['schedule','Schedule'],['teams','Teams'],['players','Players'],['leaders','Leaders'],['trades','Trades'],['injuries','Injuries'],['retired','Retired'],['awards','Awards'],['import','Connect']];
 function route(){
@@ -439,7 +468,7 @@ window.addEventListener('hashchange',route);
   let saved=null;try{saved=localStorage.getItem('fh-league')}catch(_){}
   try{if(saved)setData(JSON.parse(saved),false);else setData(makeSample(),true)}catch(_){setData(makeSample(),true)}
   route();
-  checkLive().then(()=>{if(location.hash==='#import')route()});
+  checkLive().then(()=>{try{const d=liveRows&&liveToLeague(liveRows);if(d)setData(d,false)}catch(_){}route()});
 })();
 </script>
 </body>
