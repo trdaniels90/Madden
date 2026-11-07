@@ -393,6 +393,16 @@ function latestFullWeek(){
   const ws=[...new Set(D.games.map(g=>g.week))].sort((a,b)=>b-a);
   return ws.find(w=>(X.byWeek[w]||[]).filter(g=>g.played).length>=8)||ws.find(w=>(X.byWeek[w]||[]).some(g=>g.played))||ws[0];
 }
+function through(wk){
+  const r={};D.teams.forEach(t=>r[t.id]={w:0,l:0,t:0,pf:0,pa:0,res:[]});
+  D.games.filter(g=>g.played&&g.week<=wk).sort((a,b)=>a.week-b.week).forEach(g=>{
+    const H=r[g.home],A=r[g.away];if(!H||!A)return;
+    H.pf+=g.hs;H.pa+=g.as;A.pf+=g.as;A.pa+=g.hs;
+    if(g.hs>g.as){H.w++;A.l++;H.res.push('W');A.res.push('L')}else if(g.hs<g.as){A.w++;H.l++;A.res.push('W');H.res.push('L')}else{H.t++;A.t++;H.res.push('T');A.res.push('T')}});
+  return r;
+}
+const runOf=res=>{const l=res[res.length-1];let n=0;for(let i=res.length-1;i>=0&&res[i]===l;i--)n++;return [l,n]};
+const pctR=r=>{const g=r.w+r.l+r.t;return g?(r.w+r.t/2)/g:0};
 function newsFor(wk){
   const items=[];
   (X.byWeek[wk]||[]).filter(g=>g.played).forEach(g=>{
@@ -412,6 +422,38 @@ function newsFor(wk){
     if(star)body+=` ${star.name} led the way: ${line(star,best)}.`;
     items.push({tags,score:tags.length*100+(tags.includes('Upset')?50:0)+(tags.includes('Nail-biter')?30:0)+margin,head:`${W.name} ${ws}, ${L.name} ${ls}`,body,W,L});
   });
+  /* streaks, division races and standout performances */
+  const now=through(wk),prev=through(wk-1);
+  const played=new Set();(X.byWeek[wk]||[]).filter(g=>g.played).forEach(g=>{played.add(g.home);played.add(g.away)});
+  D.teams.forEach(t=>{
+    if(!played.has(t.id))return;const r=now[t.id],[k,n]=runOf(r.res);if(n<3||k==='T')return;
+    const g=gameFor(t.id,wk),home=g.home===t.id,o=X.team[home?g.away:g.home],my=home?g.hs:g.as,th=home?g.as:g.hs;
+    if(k==='W')items.push({tags:['Streak'],score:60+n*10,head:`${t.name} win ${n} straight`,body:`${t.city} ${t.name} have won ${n} in a row and sit at ${r.w}-${r.l}${r.t?'-'+r.t:''}. Their latest win came ${home?'at home':'on the road'} against the ${o.name}, ${my}-${th}.`});
+    else items.push({tags:['Streak'],score:40+n*10,head:`${t.name} lose ${n} in a row`,body:`${t.city} ${t.name} have dropped ${n} straight and fall to ${r.w}-${r.l}${r.t?'-'+r.t:''}. They lost ${my}-${th} to the ${o.name}.`});
+  });
+  if(wk>1){
+    const lead=(R,conf,div)=>D.teams.filter(t=>t.conf===conf&&t.div===div).sort((a,b)=>pctR(R[b.id])-pctR(R[a.id])||(R[b.id].pf-R[b.id].pa)-(R[a.id].pf-R[a.id].pa))[0];
+    [...new Set(D.teams.map(t=>t.conf+'|'+t.div))].forEach(k=>{
+      const [conf,div]=k.split('|'),a=lead(prev,conf,div),b=lead(now,conf,div);
+      if(a&&b&&a.id!==b.id&&played.has(b.id)){const rb=now[b.id],ra=now[a.id];
+        items.push({tags:['Standings'],score:120,head:`${b.name} take over the ${conf} ${div}`,body:`${b.city} ${b.name} (${rb.w}-${rb.l}${rb.t?'-'+rb.t:''}) move ahead of the ${a.name} (${ra.w}-${ra.l}${ra.t?'-'+ra.t:''}) in the ${conf} ${div} race.`})}
+    });
+  }
+  const best={};
+  const cand=(s,sc,head,body)=>{const p=best[s.pid];if(!p||sc>p.score)best[s.pid]={tags:['Standout'],score:sc,head,body}};
+  D.stats.filter(s=>s.week===wk&&X.player[s.pid]).forEach(s=>{
+    const p=X.player[s.pid],tm=X.team[p.tid],tag=tm?tm.abbr:'';
+    if(s.py>=350)cand(s,s.py/4,`${p.name} throws for ${s.py}`,`${p.name} (${tag}) passed for ${s.py} yards: ${line(p,s)}.`);
+    if(s.ptd>=4)cand(s,s.ptd*40,`${p.name} tosses ${s.ptd} touchdowns`,`${p.name} (${tag}) put up a big day through the air: ${line(p,s)}.`);
+    if(s.ry>=150)cand(s,s.ry/1.5,`${p.name} runs for ${s.ry}`,`${p.name} (${tag}) ran for ${s.ry} yards: ${line(p,s)}.`);
+    if(s.rtd>=3)cand(s,s.rtd*40,`${p.name} scores ${s.rtd} on the ground`,`${p.name} (${tag}) found the end zone ${s.rtd} times rushing: ${line(p,s)}.`);
+    if(s.recy>=150)cand(s,s.recy/1.5,`${p.name} racks up ${s.recy} receiving`,`${p.name} (${tag}) caught ${s.rec} passes for ${s.recy} yards.`);
+    if(s.rectd>=3)cand(s,s.rectd*40,`${p.name} catches ${s.rectd} touchdowns`,`${p.name} (${tag}) was the top target: ${line(p,s)}.`);
+    if(s.sck>=3)cand(s,s.sck*35,`${p.name} sacks the quarterback ${s.sck} times`,`${p.name} (${tag}) wrecked the pocket with ${s.sck} sacks.`);
+    if(s.int>=2)cand(s,s.int*45,`${p.name} picks off ${s.int}`,`${p.name} (${tag}) intercepted ${s.int} passes.`);
+    if(s.fgm>=4)cand(s,s.fgm*30,`${p.name} drills ${s.fgm} field goals`,`${p.name} (${tag}) made ${s.fgm} of ${s.fga} field goal tries.`);
+  });
+  Object.values(best).sort((a,b)=>b.score-a.score).slice(0,8).forEach(x=>items.push(x));
   return items.sort((a,b)=>b.score-a.score);
 }
 V.news=()=>{
@@ -419,7 +461,7 @@ V.news=()=>{
   const items=newsFor(wk),aw=awardsFor(wk);
   const top=D.teams.slice().sort(sortStand).slice(0,5);
   const streaks=D.teams.map(t=>[t,streak(X.rec[t.id])]).filter(([,st])=>/^[WL]\d+$/.test(st)&&+st.slice(1)>=4).sort((a,b)=>+b[1].slice(1)-+a[1].slice(1));
-  return `<div class="cols grid"><div><h1>League News</h1><p class="note">Written automatically from your exported games and stats.</p>${weekChips(wk,latestFullWeek(),'news')}<div class="grid">${items.map(n=>`<article class="card"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${n.tags.map(t=>`<span class="pill ${t==='Upset'?'l':''}">${t}</span>`).join('')}</div><h3>${esc(n.head)}</h3><p style="margin:6px 0 0">${esc(n.body)}</p></article>`).join('')||'<p class="muted">No finished games this week.</p>'}</div></div>
+  return `<div class="cols grid"><div><h1>League News</h1><p class="note">Written automatically from your exported games and stats.</p>${weekChips(wk,latestFullWeek(),'news')}<div class="grid">${items.map(n=>`<article class="card"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${n.tags.map(t=>`<span class="pill ${t==='Upset'?'l':t==='Streak'?'w':''}">${t}</span>`).join('')}</div><h3>${esc(n.head)}</h3><p style="margin:6px 0 0">${esc(n.body)}</p></article>`).join('')||'<p class="muted">No finished games this week.</p>'}</div></div>
   <div class="grid" style="align-content:start"><section class="card"><h2>Players of the Week</h2>${aw.length?aw.map(a=>`<p style="margin:0 0 10px"><span class="pill">${esc(a.type)}</span><br>${plink(X.player[a.pid])} <span class="muted">${esc(X.team[X.player[a.pid].tid]?.abbr||'')}</span><br><span class="kp">${esc(a.text)}</span></p>`).join(''):'<p class="muted">No awards for this week.</p>'}</section>
   <section class="card"><h2>Top of the league</h2>${table(['Team','Record','Diff'],top.map(t=>{const r=X.rec[t.id];return [tlink(t),recStr(r),r.pf-r.pa]}))}</section>
   ${streaks.length?`<section class="card"><h2>Streaks</h2>${table(['Team','Streak'],streaks.map(([t,st])=>[tlink(t),`<span class="pill ${st[0]==='W'?'w':'l'}">${st}</span>`]))}</section>`:''}</div></div>`;
@@ -471,7 +513,7 @@ const NAV=[['scores','Scores'],['news','News'],['matchups','Matchups'],['standin
 function route(){
   const h=location.hash.slice(1)||'scores', [name,arg]=h.split('-');
   const base=name==='team'||name==='player'?(name==='team'?'teams':'players'):name;
-  $('nav').innerHTML=NAV.map(([k,l])=>`<a href="#${k}" class="${k===base?'on':''}">${l}</a>`).join('');
+  $('nav').innerHTML=NAV.filter(([k])=>k!=='trades'||(D.trades&&D.trades.length)).map(([k,l])=>`<a href="#${k}" class="${k===base?'on':''}">${l}</a>`).join('');
   let html;
   try{
     if(name==='team')html=teamPage(+arg);else if(name==='player')html=playerPage(+arg);else html=(V[name]||V.scores)();
