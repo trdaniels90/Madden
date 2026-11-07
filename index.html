@@ -211,7 +211,7 @@ function build(d){
   });
   d.stats.forEach(s=>{const t=x.tot[s.pid];if(!t)return;t.gp++;F.forEach(f=>t[f]+=(s[f]||0));x.logs[s.pid].push(s)});
   Object.values(x.logs).forEach(l=>l.sort((a,b)=>a.week-b.week));
-  if(d.standings)d.standings.forEach(s=>{const r=x.rec[s.tid];if(r)Object.assign(r,{w:s.w,l:s.l,t:s.t,pf:s.pf,pa:s.pa,hw:s.hw,hl:s.hl,aw:s.aw,al:s.al,res:[]})});
+  if(d.standings)d.standings.forEach(s=>{const r=x.rec[s.tid];if(r)Object.assign(r,{w:s.w,l:s.l,t:s.t,pf:s.pf,pa:s.pa,hw:s.hw,hl:s.hl,aw:s.aw,al:s.al,res:r.res.length>=s.w+s.l+s.t?r.res.slice(-(s.w+s.l+s.t)):[]})});
   return x;
 }
 const pct=r=>{const g=r.w+r.l+r.t;return g?(r.w+r.t/2)/g:0};
@@ -389,6 +389,41 @@ V.retired=()=>{
   const r=D.retired.slice().sort((a,b)=>(b.season||0)-(a.season||0)||(b.ovr||0)-(a.ovr||0));
   return `<h1>Retired Players</h1><section class="card" style="margin-top:12px">${r.length?table(['Player','Pos','Last team','Age','Years','Final OVR','Retired','HOF'],r.map(p=>[esc(p.name),esc(p.pos||''),X.team[p.tid]?tlink(X.team[p.tid]):'',p.age||'',p.years||'',p.ovr||'',p.season||'',p.hof?'<span class="pill w">HOF</span>':''])):'<p class="muted">No retired players recorded.</p>'}</section>`;
 };
+function latestFullWeek(){
+  const ws=[...new Set(D.games.map(g=>g.week))].sort((a,b)=>b-a);
+  return ws.find(w=>(X.byWeek[w]||[]).filter(g=>g.played).length>=8)||ws.find(w=>(X.byWeek[w]||[]).some(g=>g.played))||ws[0];
+}
+function newsFor(wk){
+  const items=[];
+  (X.byWeek[wk]||[]).filter(g=>g.played).forEach(g=>{
+    const H=X.team[g.home],A=X.team[g.away];if(!H||!A)return;
+    const hw=g.hs>g.as,W=hw?H:A,L=hw?A:H,ws=Math.max(g.hs,g.as),ls=Math.min(g.hs,g.as),margin=ws-ls;
+    const tags=[];
+    if(W.ovr+5<=L.ovr)tags.push('Upset');
+    if(margin<=3)tags.push('Nail-biter');
+    if(margin>=21)tags.push('Blowout');
+    if(ws+ls>=70)tags.push('Shootout');
+    const ids=new Set(D.players.filter(p=>p.tid===g.home||p.tid===g.away).map(p=>p.id));
+    let best=null,bs=-1;
+    D.stats.forEach(s=>{if(s.week===wk&&ids.has(s.pid)){const v=offScore(s);if(v>bs){bs=v;best=s}}});
+    const star=best&&X.player[best.pid];
+    let body=`${W.city} ${W.name} ${margin<=3?'edged':margin>=21?'routed':'beat'} ${L.city} ${L.name}, ${ws}-${ls}.`;
+    if(tags.includes('Upset'))body+=` The ${W.name} (OVR ${W.ovr}) pulled off the upset over the ${L.name} (OVR ${L.ovr}).`;
+    if(star)body+=` ${star.name} led the way: ${line(star,best)}.`;
+    items.push({tags,score:tags.length*100+(tags.includes('Upset')?50:0)+(tags.includes('Nail-biter')?30:0)+margin,head:`${W.name} ${ws}, ${L.name} ${ls}`,body,W,L});
+  });
+  return items.sort((a,b)=>b.score-a.score);
+}
+V.news=()=>{
+  const wk=selWeek??latestFullWeek();
+  const items=newsFor(wk),aw=awardsFor(wk);
+  const top=D.teams.slice().sort(sortStand).slice(0,5);
+  const streaks=D.teams.map(t=>[t,streak(X.rec[t.id])]).filter(([,st])=>/^[WL]\d+$/.test(st)&&+st.slice(1)>=4).sort((a,b)=>+b[1].slice(1)-+a[1].slice(1));
+  return `<div class="cols grid"><div><h1>League News</h1><p class="note">Written automatically from your exported games and stats.</p>${weekChips(wk,latestFullWeek(),'news')}<div class="grid">${items.map(n=>`<article class="card"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${n.tags.map(t=>`<span class="pill ${t==='Upset'?'l':''}">${t}</span>`).join('')}</div><h3>${esc(n.head)}</h3><p style="margin:6px 0 0">${esc(n.body)}</p></article>`).join('')||'<p class="muted">No finished games this week.</p>'}</div></div>
+  <div class="grid" style="align-content:start"><section class="card"><h2>Players of the Week</h2>${aw.length?aw.map(a=>`<p style="margin:0 0 10px"><span class="pill">${esc(a.type)}</span><br>${plink(X.player[a.pid])} <span class="muted">${esc(X.team[X.player[a.pid].tid]?.abbr||'')}</span><br><span class="kp">${esc(a.text)}</span></p>`).join(''):'<p class="muted">No awards for this week.</p>'}</section>
+  <section class="card"><h2>Top of the league</h2>${table(['Team','Record','Diff'],top.map(t=>{const r=X.rec[t.id];return [tlink(t),recStr(r),r.pf-r.pa]}))}</section>
+  ${streaks.length?`<section class="card"><h2>Streaks</h2>${table(['Team','Streak'],streaks.map(([t,st])=>[tlink(t),`<span class="pill ${st[0]==='W'?'w':'l'}">${st}</span>`]))}</section>`:''}</div></div>`;
+};
 V.trades=()=>`<h1>Trades</h1><section class="card" style="margin-top:12px"><div class="note" style="margin-bottom:6px">${(D.trades||[]).length} trade${(D.trades||[]).length===1?'':'s'} this season. Rosters above already reflect them.</div>${(D.trades||[]).map(t=>tradeHtml(t)).join('')||'<p class="muted">No trades recorded.</p>'}</section>`;
 function awardsFor(wk){
   const have=(D.awards||[]).filter(a=>a.week===wk&&X.player[a.pid]);if(have.length)return have;
@@ -432,7 +467,7 @@ function setData(d,demo){
   D=d;DEMO=!!demo;X=build(d);selWeek=null;
   $('lg').textContent=(d.league||'Franchise')+' · '+(d.season||'')+' · Week '+d.week+(d.live?' · Live':'');
 }
-const NAV=[['scores','Scores'],['matchups','Matchups'],['standings','Standings'],['schedule','Schedule'],['teams','Teams'],['players','Players'],['leaders','Leaders'],['trades','Trades'],['injuries','Injuries'],['retired','Retired'],['awards','Awards'],['import','Connect']];
+const NAV=[['scores','Scores'],['news','News'],['matchups','Matchups'],['standings','Standings'],['schedule','Schedule'],['teams','Teams'],['players','Players'],['leaders','Leaders'],['trades','Trades'],['injuries','Injuries'],['retired','Retired'],['awards','Awards'],['import','Connect']];
 function route(){
   const h=location.hash.slice(1)||'scores', [name,arg]=h.split('-');
   const base=name==='team'||name==='player'?(name==='team'?'teams':'players'):name;
