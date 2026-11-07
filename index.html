@@ -236,7 +236,7 @@ function liveToLeague(rows){
   const games=[];
   rows.forEach(r=>{const m=r.key.match(/^[^/]+\/[^/]+\/week\/reg\/(\d+)\/schedules$/);if(!m)return;
     (r.body.gameScheduleInfoList||[]).forEach(g=>{const h=tmap[g.homeTeamId],a=tmap[g.awayTeamId];if(h===undefined||a===undefined)return;
-      const wk=g.weekIndex!=null?g.weekIndex+1:+m[1];const ex=games.find(x=>x.sid===g.scheduleId);const gm={sid:g.scheduleId,week:wk,home:h,away:a,hs:g.homeScore,as:g.awayScore,played:g.status===3};if(!ex)games.push(gm);else if(gm.played&&!ex.played)Object.assign(ex,gm)})});
+      const wk=g.weekIndex!=null?g.weekIndex+1:+m[1];const ex=games.find(x=>x.sid===g.scheduleId);const gm={sid:g.scheduleId,week:wk,home:h,away:a,hs:g.homeScore,as:g.awayScore,played:g.status>1};if(!ex)games.push(gm);else if(gm.played&&!ex.played)Object.assign(ex,gm)})});
   if(!games.length)return null;
   const st=(by['standings']&&by['standings'].teamStandingInfoList)||[];
   const standings=st.filter(x=>tmap[x.teamId]!==undefined).map(x=>({tid:tmap[x.teamId],w:x.totalWins,l:x.totalLosses,t:x.totalTies,pf:x.ptsFor,pa:x.ptsAgainst,hw:x.homeWins,hl:x.homeLosses,aw:x.awayWins,al:x.awayLosses}));
