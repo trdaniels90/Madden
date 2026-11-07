@@ -59,6 +59,7 @@ tr:last-child td{border-bottom:0}
 tbody tr:hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}
 .badge{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;color:#fff;font-family:var(--display);font-weight:800;font-size:13px;letter-spacing:.02em;flex:none}
 .badge.logo{background:none;border-radius:0}
+.badge:not(.logo){box-shadow:inset 0 0 0 1px rgba(128,128,128,.45)}
 .ava{width:64px;height:64px;border-radius:50%;object-fit:cover;background:var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:800;font-size:22px;color:var(--muted);overflow:hidden;flex:none}
 .badge img{width:100%;height:100%;object-fit:contain;display:block}
 .badge.sm{width:24px;height:24px;font-size:10px}
@@ -232,7 +233,7 @@ function liveToLeague(rows){
   const by={};rows.forEach(r=>{const p=r.key.split('/');by[p.slice(2).join('/')]=r.body});
   const lt=by['leagueteams']&&by['leagueteams'].leagueTeamInfoList;if(!lt||!lt.length)return null;
   const tmap={};
-  const teams=lt.map((t,i)=>{tmap[t.teamId]=i;const dv=(t.divName||'').split(' ');return{id:i,conf:dv[0]||'',div:dv.slice(1).join(' ')||'',abbr:t.abbrName,city:t.cityName,name:t.nickName||t.displayName,ovr:t.ovrRating||70}});
+  const teams=lt.map((t,i)=>{tmap[t.teamId]=i;const dv=(t.divName||'').split(' ');return{id:i,conf:dv[0]||'',div:dv.slice(1).join(' ')||'',abbr:t.abbrName,city:t.cityName,name:t.nickName||t.displayName,ovr:t.ovrRating||70,color:'#'+((t.primaryColor>>>0)&0xffffff).toString(16).padStart(6,'0')}});
   const games=[];
   rows.forEach(r=>{const m=r.key.match(/^[^/]+\/[^/]+\/week\/reg\/(\d+)\/schedules$/);if(!m)return;
     (r.body.gameScheduleInfoList||[]).forEach(g=>{const h=tmap[g.homeTeamId],a=tmap[g.awayTeamId];if(h===undefined||a===undefined)return;
@@ -256,7 +257,10 @@ function liveToLeague(rows){
   const wks=games.map(g=>g.week);
   return{league:'My Franchise',season:st[0]&&st[0].calendarYear||'',week:Math.max(...wks),live:true,teams,players:Object.values(pl),games,stats:Object.values(sx),standings};
 }
-function badge(t,c){const L=LOGOS[t.abbr];if(L)return `<span class="badge logo ${c||''}"><img src="${esc(L)}" alt="${esc(t.abbr)}"></span>`;return `<span class="badge ${c||''}" style="background:hsl(${hue(t.id)} 55% 38%)">${esc(t.abbr)}</span>`}
+const MAIN={DEN:'#fc4c02'};
+function tcol(t){return MAIN[t.abbr]||t.color||`hsl(${hue(t.id)} 55% 38%)`}
+function tink(t){const c=tcol(t);const m=/^#([0-9a-f]{6})$/i.exec(c);if(!m)return '#fff';const n=parseInt(m[1],16),l=(0.299*(n>>16)+0.587*((n>>8)&255)+0.114*(n&255))/255;return l>0.62?'#111':'#fff'}
+function badge(t,c){const L=LOGOS[t.abbr];if(L)return `<span class="badge logo ${c||''}"><img src="${esc(L)}" alt="${esc(t.abbr)}"></span>`;return `<span class="badge ${c||''}" style="background:${tcol(t)};color:${tink(t)}">${esc(t.abbr)}</span>`}
 function tlink(t,short){return `<a class="tm" href="#team-${t.id}">${badge(t,'sm')}<span>${esc(short?t.abbr:t.city+' '+t.name)}</span></a>`}
 function plink(p){return p?`<a href="#player-${p.id}" style="font-weight:600">${esc(p.name)}</a>`:''}
 function table(head,rows,cls){return `<div class="tw"><table class="${cls||''}"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`}
@@ -310,7 +314,7 @@ V.matchups=()=>{
     const H=X.team[g.home],A=X.team[g.away];const sp=Math.round(((H.ovr-A.ovr)*.5+2)*2)/2; const fav=sp>=0?H:A; const hp=Math.max(8,Math.min(92,Math.round(50+(H.ovr-A.ovr)*2.4+4)));
     return `<article class="card"><div class="status"><span>Week ${g.week}</span><span>${g.played?`Final ${A.abbr} ${g.as} - ${H.abbr} ${g.hs}`:`Line: ${esc(fav.abbr)} -${Math.abs(sp)}`}</span></div>
     <div class="vs" style="margin-top:10px">${side(A,'')}<div class="mid">@</div>${side(H,'r')}</div>
-    <div style="margin-top:12px"><div class="bar" title="Win chance"><i style="width:${100-hp}%;background:hsl(${hue(A.id)} 55% 38%)"></i><i style="width:${hp}%;background:hsl(${hue(H.id)} 55% 38%)"></i></div><div class="status" style="margin-top:4px"><span>${A.abbr} ${100-hp}%</span><span>${H.abbr} ${hp}%</span></div></div></article>`}).join('')}</div>`;
+    <div style="margin-top:12px"><div class="bar" title="Win chance"><i style="width:${100-hp}%;background:${tcol(A)}"></i><i style="width:${hp}%;background:${tcol(H)}"></i></div><div class="status" style="margin-top:4px"><span>${A.abbr} ${100-hp}%</span><span>${H.abbr} ${hp}%</span></div></div></article>`}).join('')}</div>`;
 };
 V.standings=()=>{
   const divs=['East','North','South','West'];
